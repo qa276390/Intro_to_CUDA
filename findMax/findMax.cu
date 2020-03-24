@@ -11,6 +11,8 @@
 // Includes
 #include <stdio.h>
 #include <stdlib.h>
+#include <iostream>
+#include <fstream>
 
 // Variables
 float* h_A;   // host vectors
@@ -62,58 +64,11 @@ __global__ void VecDot(const float* A, float* C, int N)
 // Host code
 
 //int main(void)
-int opt(int gpuid, int N, int threadsPerBlock, int blocksPerGrid)
+int opt(int gpuid, int N, int threadsPerBlock, int blocksPerGrid, std::ofstream& myfile)
 {
 
-/*    int gid;
-
-    // Error code to check return values for CUDA calls
-    cudaError_t err = cudaSuccess;
-
-    printf("Enter the GPU ID: ");
-    scanf("%d",&gid);
-    printf("%d\n", gid);
-    err = cudaSetDevice(gid);
-    if (err != cudaSuccess) {
-        printf("!!! Cannot select GPU with device ID = %d\n", gid);
-        exit(1);
-    }
-    printf("Set GPU with device ID = %d\n", gid);
-
-    cudaSetDevice(gid);
-
-    printf("Vector Dot Product: A.B\n");
-    int N;
-
-    printf("Enter the size of the vectors: ");
-    scanf("%d",&N);        
-    printf("%d\n",N); 
-    //N = 81920007;    
-
-    // Set the sizes of threads and blocks
-
-    int threadsPerBlock;
-    printf("Enter the number (2^m) of threads per block: ");
-    scanf("%d",&threadsPerBlock);
- */ printf("%d\n",threadsPerBlock);
-    /*if( threadsPerBlock > 1024 ) {
-      printf("The number of threads per block must be less than 1024 ! \n");
-      exit(0);
-    }
-
-//    int blocksPerGrid = (N + threadsPerBlock - 1)/threadsPerBlock;
-//    printf("The number of blocks per grid:%d\n",blocksPerGrid);
- 
-    int blocksPerGrid;
-    printf("Enter the number of blocks per grid: ");
-    scanf("%d",&blocksPerGrid);
-*/    printf("%d\n",blocksPerGrid);
-/*
-    if( blocksPerGrid > 2147483647 ) {
-      printf("The number of blocks must be less than 2147483647 ! \n");
-      exit(0);
-    }
-*/
+	 printf("%d\n",threadsPerBlock);
+	 printf("%d\n",blocksPerGrid);
     // Allocate input vectors h_A and h_B in host memory
 
     int size = N * sizeof(float);
@@ -230,12 +185,14 @@ int opt(int gpuid, int N, int threadsPerBlock, int blocksPerGrid)
     printf("|(h_G - h_D)/h_D|=%20.15e\n",diff);
     //printf("h_G =%20.15e\n",h_G);
     //printf("h_D =%20.15e\n",h_D);
-
+	myfile<<threadsPerBlock<<","<<blocksPerGrid<<","<<Outime<<","<<gputime<<","<<Intime <<","<<gputime_tot<<","<<diff<<","<<cputime<<","<< (cputime/(gputime_tot))<<std::endl;
     free(h_A);
     //free(h_B);
     free(h_C);
 
     cudaDeviceReset();
+
+
 }
 
 
@@ -251,7 +208,9 @@ void RandomInit(float* data, int n)
 // main
 
 int main(void){
-
+	std::ofstream myfile;
+	myfile.open("Output.csv");
+	myfile<<"threadsPerBlock"<<","<<"blocksPerGrid"<<","<<"Outime"<<","<<"gputime"<<","<<"Intime"<<","<<"gputime_tot"<<","<<"diff"<<","<<"cputime"<<","<<"savetime"<<std::endl;
     int gid;
 
     // Error code to check return values for CUDA calls
@@ -284,7 +243,7 @@ int main(void){
 
 	for(int i = 0; i<6; i++){
 		for(int j=0; j<6; j++){
-			opt(gid, N, threadsPerBlocks[i], blocksPerGrids[j]);
+			opt(gid, N, threadsPerBlocks[i], blocksPerGrids[j], myfile);
 		}
 	}
 }
