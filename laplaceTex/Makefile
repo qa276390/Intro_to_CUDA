@@ -9,11 +9,12 @@ NVFLAGS := -O3 -I$(CUDIR)/include -m64 -arch=compute_52 -code=sm_52 -Xptxas -v
 
 BIN     := laplace
 BIN_TEX := laplaceTex
+BIN_3D_TEX := laplace3DTex
 BIN_CPU := laplace_cpu
 BIN_TEX_HW3_2 := hw3_2_laplaceTex
 LIB     :=
 
-all: $(BIN) $(BIN_TEX) $(BIN_CPU) $(BIN_TEX_HW3_2)
+all: $(BIN) $(BIN_TEX) $(BIN_CPU) $(BIN_TEX_HW3_2) $(BIN_3D_TEX)
 
 $(BIN): laplace.cu
 	$(NVCC) -o $(BIN) $(NVFLAGS) laplace.cu $(LIB)
@@ -21,10 +22,13 @@ $(BIN): laplace.cu
 $(BIN_TEX): laplaceTex.cu
 	$(NVCC) -o $(BIN_TEX) $(NVFLAGS) laplaceTex.cu $(LIB)
 
+$(BIN_3D_TEX): laplace3DTex.cu
+	$(NVCC) -o $(BIN_3D_TEX) $(NVFLAGS) laplace3DTex.cu $(LIB)
+
 $(BIN_TEX_HW3_2): hw3_2_laplaceTex.cu
 	$(NVCC) -o $(BIN_TEX_HW3_2) $(NVFLAGS) hw3_2_laplaceTex.cu $(LIB)
 
 $(BIN_CPU): laplace_cpu.cu
 	$(NVCC) -o $(BIN_CPU) $(NVFLAGS) laplace_cpu.cu $(LIB)
 clean:
-	rm -f $(BIN) $(BIN_CPU) $(BIN_TEX) $(BIN_TEX_HW3_2)
+	rm -f $(BIN) $(BIN_CPU) $(BIN_TEX) $(BIN_TEX_HW3_2) $(BIN_3D_TEX)

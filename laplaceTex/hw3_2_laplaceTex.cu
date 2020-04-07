@@ -34,6 +34,385 @@ __align__(8) texture<float>  texOld;   // declare the texture
 __align__(8) texture<float>  texNew;
 
 
+__global__ void laplacian_(float* phi_old, float* phi_new, float* C, bool flag)
+{
+    extern __shared__ float cache[];     
+    float  t, l, r, b;     // top, left, right, bottom
+    float  diff; 
+    int    site, ym1, xm1, xp1, yp1;
+
+    int Nx = blockDim.x*gridDim.x;
+    int Ny = blockDim.y*gridDim.y;
+    int x = blockDim.x*blockIdx.x + threadIdx.x;
+    int y = blockDim.y*blockIdx.y + threadIdx.y;
+    int cacheIndex = threadIdx.x + threadIdx.y*blockDim.x;  
+
+    site = x + y*Nx;
+
+    if((x == 0) || (x == Nx-1) || (y == 0) || (y == Ny-1) ) {  
+      diff = 0.0;
+    }
+    else {
+      xm1 = site - 1;    // x-1
+      xp1 = site + 1;    // x+1
+      ym1 = site - Nx;   // y-1
+      yp1 = site + Nx;   // y+1
+      if(flag) {
+        b = phi_old[ym1]; 
+        l = phi_old[xm1]; 
+        r = phi_old[xp1]; 
+        t = phi_old[yp1]; 
+        phi_new[site] = 0.25*(b+l+r+t);
+      }
+      else {
+        b = phi_new[ym1]; 
+        l = phi_new[xm1]; 
+        r = phi_new[xp1]; 
+        t = phi_new[yp1]; 
+        phi_old[site] = 0.25*(b+l+r+t);
+      }
+      diff = phi_new[site]-phi_old[site];
+    }
+    cache[cacheIndex]=diff*diff;
+    __syncthreads();
+
+    // perform parallel reduction
+
+    int ib = blockDim.x*blockDim.y/2;  
+    while (ib != 0) {  
+      if(cacheIndex < ib)  
+        cache[cacheIndex] += cache[cacheIndex + ib];
+      __syncthreads();
+      ib /=2;  
+    } 
+    int blockIndex = blockIdx.x + gridDim.x*blockIdx.y;
+    if(cacheIndex == 0)  C[blockIndex] = cache[0];
+}
+
+int op_(int gid, int CPU, int Nx, int Ny, int tx, int ty, std::ofstream& myfile)
+{
+    int iter;
+    volatile bool flag;   // to toggle between *_new and *_old  
+    float cputime;
+    float gputime;
+    float gputime_tot;
+    double flops;
+    double error;
+    
+	dim3 threads(tx,ty); 
+    
+    // The total number of threads in the grid is equal to the total number of lattice sites
+    
+    int bx = Nx/tx;
+    if(bx*tx != Nx) {
+      printf("The block size in x is incorrect\n"); 
+      exit(0);
+    }
+    int by = Ny/ty;
+    if(by*ty != Ny) {
+      printf("The block size in y is incorrect\n"); 
+      exit(0);
+    }
+    if((bx > 65535)||(by > 65535)) {
+      printf("The grid size exceeds the limit ! \n");
+      exit(0);
+    }
+    dim3 blocks(bx,by);
+    printf("The dimension of the grid is (%d, %d)\n",bx,by); 
+    // Allocate field vector h_phi in host memory
+
+    int N = Nx*Ny;
+    int size = N*sizeof(float);
+    int sb = bx*by*sizeof(float);
+    h_old = (float*)malloc(size);
+    h_new = (float*)malloc(size);
+    g_new = (float*)malloc(size);
+    h_C = (float*)malloc(sb);
+   
+    memset(h_old, 0, size);
+    memset(h_new, 0, size);
+
+    // Initialize the field vector with boundary conditions
+
+    for(int x=0; x<Nx; x++) {
+      h_new[x+Nx*(Ny-1)]=1.0;  
+      h_old[x+Nx*(Ny-1)]=1.0;
+    }  
+
+    FILE *out1;                 // save initial configuration in phi_initial.dat
+    out1 = fopen("phi_initial.dat","w");
+
+    fprintf(out1, "Inital field configuration:\n");
+    for(int j=Ny-1;j>-1;j--) {
+      for(int i=0; i<Nx; i++) {
+        fprintf(out1,"%.2e ",h_new[i+j*Nx]);
+      }
+      fprintf(out1,"\n");
+    }
+    fclose(out1);
+
+//    printf("\n");
+//    printf("Inital field configuration:\n");
+//    for(int j=Ny-1;j>-1;j--) {
+//      for(int i=0; i<Nx; i++) {
+//        printf("%.2e ",h_new[i+j*Nx]);
+//      }
+//      printf("\n");
+//    }
+
+    printf("\n");
+
+    // create the timer
+    cudaEvent_t start, stop;
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
+
+    if(CPU>0) {
+
+      // start the timer
+      cudaEventRecord(start,0);
+
+      // Allocate vectors in device memory
+
+      cudaMalloc((void**)&d_new, size);
+      cudaMalloc((void**)&d_old, size);
+      cudaMalloc((void**)&d_C, sb);
+  
+      // Copy vectors from host memory to device memory
+
+      cudaMemcpy(d_new, h_new, size, cudaMemcpyHostToDevice);
+      cudaMemcpy(d_old, h_old, size, cudaMemcpyHostToDevice);
+    
+      // stop the timer
+      cudaEventRecord(stop,0);
+      cudaEventSynchronize(stop);
+
+      float Intime;
+      cudaEventElapsedTime( &Intime, start, stop);
+      printf("Input time for GPU: %f (ms) \n",Intime);
+
+      // start the timer
+      cudaEventRecord(start,0);
+
+      error = 10*eps;  // any value bigger than eps is OK
+      iter = 0;        // counter for iterations
+      flag = true; 
+ 
+      int sm = tx*ty*sizeof(float);   // size of the shared memory in each block
+
+      while ( (error > eps) && (iter < MAX) ) {
+
+        laplacian_<<<blocks,threads,sm>>>(d_old, d_new, d_C, flag);
+        cudaMemcpy(h_C, d_C, sb, cudaMemcpyDeviceToHost);
+        error = 0.0;
+        for(int i=0; i<bx*by; i++) {
+          error = error + h_C[i];
+        }
+        error = sqrt(error);
+
+//        printf("error = %.15e\n",error);
+//        printf("iteration = %d\n",iter);
+
+        iter++;
+        flag = !flag;
+
+      }
+
+      printf("error (GPU) = %.15e\n",error);
+      printf("total iterations (GPU) = %d\n",iter);
+    
+      // stop the timer
+      cudaEventRecord(stop,0);
+      cudaEventSynchronize(stop);
+
+      cudaEventElapsedTime( &gputime, start, stop);
+      printf("Processing time for GPU: %f (ms) \n",gputime);
+      flops = 7.0*(Nx-2)*(Ny-2)*iter;
+      printf("GPU Gflops: %f\n",flops/(1000000.0*gputime));
+    
+      // Copy result from device memory to host memory
+  
+      // start the timer
+      cudaEventRecord(start,0);
+
+      cudaMemcpy(g_new, d_new, size, cudaMemcpyDeviceToHost);
+
+      cudaFree(d_new);
+      cudaFree(d_old);
+      cudaFree(d_C);
+
+      // stop the timer
+      cudaEventRecord(stop,0);
+      cudaEventSynchronize(stop);
+
+      float Outime;
+      cudaEventElapsedTime( &Outime, start, stop);
+      printf("Output time for GPU: %f (ms) \n",Outime);
+
+      gputime_tot = Intime + gputime + Outime;
+      printf("Total time for GPU: %f (ms) \n",gputime_tot);
+      fflush(stdout);
+
+      FILE *outg;                 // save GPU solution in phi_GPU.dat
+      outg = fopen("phi_GPU.dat","w");
+
+      fprintf(outg, "GPU field configuration:\n");
+      for(int j=Ny-1;j>-1;j--) {
+        for(int i=0; i<Nx; i++) {
+          fprintf(outg,"%.2e ",g_new[i+j*Nx]);
+        }
+        fprintf(outg,"\n");
+      }
+      fclose(outg);
+
+//      printf("\n");
+//      printf("Final field configuration (GPU):\n");
+//      for(int j=Ny-1;j>-1;j--) {
+//        for(int i=0; i<Nx; i++) {
+//          printf("%.2e ",g_new[i+j*Nx]);
+//        }
+//        printf("\n");
+//      }
+
+      printf("\n");
+
+    } 
+
+    if(CPU==1) {      // not to compute the CPU solution 
+      free(h_new);
+      free(h_old);
+      free(g_new);
+      free(h_C);
+      cudaDeviceReset();
+	  myfile<<Nx<<"x"<<Ny<<","<<tx<<"x"<<ty<<","<<gputime<<","<<gputime_tot<<","<<-1<<","<<-1<<","<<-1<<std::endl;
+      return CPU;
+    }
+ 
+    if((CPU==0)||(CPU==2)) {      // to compute the CPU solution 
+
+      // start the timer
+      cudaEventRecord(start,0);
+
+      // to compute the reference solution
+
+      error = 10*eps;      // any value bigger than eps 
+      iter = 0;            // counter for iterations
+      flag = true;     
+      double diff; 
+
+      float t, l, r, b;    // top, left, right, bottom
+      int site, ym1, xm1, xp1, yp1;
+
+      while ( (error > eps) && (iter < MAX) ) {
+        if(flag) {
+          error = 0.0;
+          for(int y=0; y<Ny; y++) {
+          for(int x=0; x<Nx; x++) { 
+            if(x==0 || x==Nx-1 || y==0 || y==Ny-1) {   
+            }
+            else {
+              site = x+y*Nx;
+              xm1 = site - 1;    // x-1
+              xp1 = site + 1;    // x+1
+              ym1 = site - Nx;   // y-1
+              yp1 = site + Nx;   // y+1
+              b = h_old[ym1]; 
+              l = h_old[xm1]; 
+              r = h_old[xp1]; 
+              t = h_old[yp1]; 
+              h_new[site] = 0.25*(b+l+r+t);
+              diff = h_new[site]-h_old[site]; 
+              error = error + diff*diff;
+            }
+          } 
+          } 
+        }
+        else {
+          error = 0.0;
+          for(int y=0; y<Ny; y++) {
+          for(int x=0; x<Nx; x++) { 
+            if(x==0 || x==Nx-1 || y==0 || y==Ny-1) {
+            }
+            else {
+              site = x+y*Nx;
+              xm1 = site - 1;    // x-1
+              xp1 = site + 1;    // x+1
+              ym1 = site - Nx;   // y-1
+              yp1 = site + Nx;   // y+1
+              b = h_new[ym1]; 
+              l = h_new[xm1]; 
+              r = h_new[xp1]; 
+              t = h_new[yp1]; 
+              h_old[site] = 0.25*(b+l+r+t);
+              diff = h_new[site]-h_old[site]; 
+              error = error + diff*diff;
+            } 
+          }
+          }
+        }
+        flag = !flag;
+        iter++;
+        error = sqrt(error);
+
+//        printf("error = %.15e\n",error);
+//        printf("iteration = %d\n",iter);
+
+      }                   // exit if error < eps
+    
+      printf("error (CPU) = %.15e\n",error);
+      printf("total iterations (CPU) = %d\n",iter);
+
+      // stop the timer
+      cudaEventRecord(stop,0);
+      cudaEventSynchronize(stop);
+
+      cudaEventElapsedTime( &cputime, start, stop);
+      printf("Processing time for CPU: %f (ms) \n",cputime);
+      flops = 7.0*(Nx-2)*(Ny-2)*iter;
+      printf("CPU Gflops: %lf\n",flops/(1000000.0*cputime));
+      printf("Speed up of GPU = %f\n", cputime/(gputime_tot));
+      fflush(stdout);
+	
+	  myfile<<Nx<<"x"<<Ny<<","<<tx<<"x"<<ty<<","<<gputime<<","<<gputime_tot<<","<<error<<","<<cputime<<","<<(cputime/gputime_tot)<<std::endl;
+
+      // destroy the timer
+      cudaEventDestroy(start);
+      cudaEventDestroy(stop);
+
+      FILE *outc;                 // save CPU solution in phi_CPU.dat
+      outc = fopen("phi_CPU.dat","w");
+
+      fprintf(outc, "CPU field configuration:\n");
+        for(int j=Ny-1;j>-1;j--) {
+        for(int i=0; i<Nx; i++) {
+          fprintf(outc,"%.2e ",h_new[i+j*Nx]);
+        }
+        fprintf(outc,"\n");
+      }
+      fclose(outc);
+
+ //     printf("\n");
+ //     printf("Final field configuration (CPU):\n");
+ //     for(int j=Ny-1;j>-1;j--) {
+ //       for(int i=0; i<Nx; i++) {
+ //         printf("%.2e ",h_new[i+j*Nx]);
+ //       }
+ //       printf("\n");
+ //     }
+
+      printf("\n");
+
+      free(h_new);
+      free(h_old);
+      free(g_new);
+      free(h_C);
+
+    }
+
+    cudaDeviceReset();
+
+
+}
 __global__ void laplacian(float* phi_old, float* phi_new, float* C, bool flag)
 {
     extern __shared__ float cache[];     
@@ -308,14 +687,16 @@ int op(int gid, int CPU, int Nx, int Ny, int tx, int ty, std::ofstream& myfile)
     // start the timer
     cudaEventRecord(start,0);
 
-    if(CPU==0) {
+	// only gpu code
+    if(CPU==1) {
       free(h_new);
       free(h_old);
       free(g_new);
       free(h_C);
       cudaDeviceReset();
-	  myfile<<Nx<<"x"<<Ny<<","<<tx<<"x"<<ty<<","<<gputime<<","<<gputime_tot<<","<<0<<","<<0<<","<<0<<std::endl;
-    } 
+	  myfile<<Nx<<"x"<<Ny<<","<<tx<<"x"<<ty<<","<<gputime<<","<<gputime_tot<<","<<-1<<","<<-1<<","<<-1<<std::endl;
+      return CPU;
+	} 
  
     // to compute the reference solution
 
@@ -377,8 +758,6 @@ int op(int gid, int CPU, int Nx, int Ny, int tx, int ty, std::ofstream& myfile)
       iter++;
       error = sqrt(error);
 
-//      printf("error = %.15e\n",error);
-//      printf("iteration = %d\n",iter);
 
     }   // exit if error < eps
     
@@ -436,8 +815,15 @@ int main(void)
 
 	int gid;              // GPU_ID
 
+	int Tex = 0;
+
 	std::ofstream myfile;
-	myfile.open("OutputTex_hw3_2.csv");
+	if(Tex == 0){
+		myfile.open("OutputTex_hw3_2_nTex.csv");
+
+	}else{
+		myfile.open("OutputTex_hw3_2.csv");
+	}
 	myfile<<"lattice_sizes"<<","<<"block sizes"<<","<<"gputime"<<","<<"gputime_tot"<<","<<"diff"<<","<<"cputime"<<","<<"savetime"<<std::endl;
 
 	printf("Enter the GPU ID (0/1): ");
@@ -464,14 +850,19 @@ int main(void)
 	fflush(stdout);
 
 	int Ns[1] = {512}; //lattice size
-	int ts[5] = {4, 8, 16, 32, 64}; //block sizes
+	int ts[5] = {64, 32, 128, 256, 512}; //block sizes
 	for(int i=0; i<1; i++)
 	{
 
 		for(int j=0; j<5; j++)
 		{
 			printf("%d %d\n",i, j);
-			op(gid, CPU, Ns[i], Ns[i], ts[j], ts[j], myfile);
+			if(Tex==0){
+				op_(gid, CPU, Ns[i], Ns[i], ts[j], ts[j], myfile);
+			
+			}else{
+				op(gid, CPU, Ns[i], Ns[i], ts[j], ts[j], myfile);
+			}
 			if(j==0)
 				CPU = 1;
 		}

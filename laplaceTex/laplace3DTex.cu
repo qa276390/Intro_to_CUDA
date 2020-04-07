@@ -37,33 +37,40 @@ __align__(8) texture<float>  texNew;
 __global__ void laplacian(float* phi_old, float* phi_new, float* C, bool flag)
 {
     extern __shared__ float cache[];     
-    float  t, l, c, r, b;     // top, left, center, right, bottom
+    float  t, l, c, r, b, f, k;     // top, left, center, right, bottom
     float  diff; 
-    int    site, ym1, xm1, xp1, yp1;    
+    int    site, ym1, xm1, xp1, yp1, zm1, zp1;    
 
     int Nx = blockDim.x*gridDim.x;
     int Ny = blockDim.y*gridDim.y;
+    int Nz = blockDim.z*gridDim.z;
     int x = blockDim.x*blockIdx.x + threadIdx.x;
     int y = blockDim.y*blockIdx.y + threadIdx.y;
-    int cacheIndex = threadIdx.x + threadIdx.y*blockDim.x;  
+    int z = blockDim.z*blockIdx.z + threadIdx.z;
+    int cacheIndex = threadIdx.x + blockDim.x * (threadIdx.y + blockDim.y*threadIdx.z);  
 
-    site = x + y*Nx;
+    site = x + Nx * (y + Ny * z);
 
-    if((x == 0) || (x == Nx-1) || (y == 0) || (y == Ny-1) ) {  
+    if((x == 0) || (x == Nx-1) || (y == 0) || (y == Ny-1) || (z == 0) || (z==Nz-1) ) {  
       diff = 0.0; 
     }
     else {
-      xm1 = site - 1;    // x-1
-      xp1 = site + 1;    // x+1
-      ym1 = site - Nx;   // y-1
-      yp1 = site + Nx;   // y+1
-      if(flag) {
+      	xm1 = site - 1;    // x-1
+      	xp1 = site + 1;    // x+1
+		ym1 = x+Nx*((y-1)+Ny*z);   // y-1
+		yp1 = x+Nx*((y+1)+Ny*z);   // y+1
+		zm1 = x+Nx*(y+Ny*(z-1));   // z-1
+		zp1 = x+Nx*(y+Ny*(z+1));   // z+1
+	if(flag) {
         b = tex1Dfetch(texOld, ym1);      // read d_old via texOld
         l = tex1Dfetch(texOld, xm1);
         c = tex1Dfetch(texOld, site);
         r = tex1Dfetch(texOld, xp1);
         t = tex1Dfetch(texOld, yp1);
-        phi_new[site] = 0.25*(b+l+r+t);
+        f = tex1Dfetch(texOld, zp1);
+        k = tex1Dfetch(texOld, zm1);
+		
+        phi_new[site] = (b+l+r+t+f+k)/6.0;
         diff = phi_new[site]-c;
       }
       else {
@@ -72,7 +79,9 @@ __global__ void laplacian(float* phi_old, float* phi_new, float* C, bool flag)
         c = tex1Dfetch(texNew, site);
         r = tex1Dfetch(texNew, xp1);
         t = tex1Dfetch(texNew, yp1);
-        phi_old[site] = 0.25*(b+l+r+t);
+        f = tex1Dfetch(texNew, zp1);
+        k = tex1Dfetch(texNew, zm1);
+        phi_old[site] = (b+l+r+t+f+k)/6.0;
         diff = phi_old[site]-c;
       }
     }
@@ -84,7 +93,7 @@ __global__ void laplacian(float* phi_old, float* phi_new, float* C, bool flag)
 
     // parallel reduction in each block 
 
-    int ib = blockDim.x*blockDim.y/2;  
+    int ib = blockDim.x*blockDim.y*blockDim.z/2;  
     while (ib != 0) {  
       if(cacheIndex < ib)  
         cache[cacheIndex] += cache[cacheIndex + ib];
@@ -94,7 +103,7 @@ __global__ void laplacian(float* phi_old, float* phi_new, float* C, bool flag)
 
     // save the partial sum of each block to C
 
-    int blockIndex = blockIdx.x + gridDim.x*blockIdx.y;
+    int blockIndex = blockIdx.x + gridDim.x*(blockIdx.y + gridDim.y*blockIdx.z);
     if(cacheIndex == 0)  C[blockIndex] = cache[0];    
 }
 
@@ -140,9 +149,9 @@ int op(int gid, int CPU, int Nx, int Ny, int Nz, int tx, int ty, int tz, std::of
    
     // Allocate field vector h_phi in host memory
 
-    int N = Nx*Ny;
+    int N = Nx*Ny*Nz;
     int size = N*sizeof(float);
-    int sb = bx*by*sizeof(float);
+    int sb = bx*by*bz*sizeof(float);
     h_old = (float*)malloc(size);
     h_new = (float*)malloc(size);
     g_new = (float*)malloc(size);
@@ -154,20 +163,25 @@ int op(int gid, int CPU, int Nx, int Ny, int Nz, int tx, int ty, int tz, std::of
     // Initialize the field vector with boundary conditions
 
     for(int x=0; x<Nx; x++) {
-      h_new[x+Nx*(Ny-1)]=1.0;  
-      h_old[x+Nx*(Ny-1)]=1.0;
-    }  
+		for(int y=0;y<Ny;y++){
+      		h_new[x+Nx*(y+Ny*(Nz-1))]=1.0;  
+      		h_old[x+Nx*(y+Ny*(Nz-1))]=1.0;  
+    	}
+	}
 
     FILE *out1;		        // save initial configuration in phi_initial_3D.dat 
     out1 = fopen("phi_initial_3D.dat","w");
 
     fprintf(out1, "Inital field configuration:\n");
-    for(int j=Ny-1;j>-1;j--) {
-      for(int i=0; i<Nx; i++) {
-        fprintf(out1,"%.2e ",h_new[i+j*Nx]);
-      }
-      fprintf(out1,"\n");
-    }
+	for(int k=Nz-1;k>=0;k--){
+		for(int j=Ny-1;j>=0;j--) {
+		  	for(int i=0; i<Nx; i++) {
+				fprintf(out1,"%.2e ",h_new[i+Nx*(j+Ny*k)]);
+		  	}
+		  	fprintf(out1,"\n");
+    	}
+		fprintf(out1,"\n");
+	}
     fclose(out1);
 
 //   printf("\n");
@@ -219,14 +233,14 @@ int op(int gid, int CPU, int Nx, int Ny, int Nz, int tx, int ty, int tz, std::of
 
     volatile bool flag = true;     
 
-    int sm = tx*ty*sizeof(float);   // size of the shared memory in each block
+    int sm = tx*ty*tz*sizeof(float);   // size of the shared memory in each block
 
     while ( (error > eps) && (iter < MAX) ) {
 
       laplacian<<<blocks,threads,sm>>>(d_old, d_new, d_C, flag);
       cudaMemcpy(h_C, d_C, sb, cudaMemcpyDeviceToHost);
       error = 0.0;
-      for(int i=0; i<bx*by; i++) {
+      for(int i=0; i<bx*by*bz; i++) {
         error = error + h_C[i];
       }
       error = sqrt(error);
@@ -250,7 +264,7 @@ int op(int gid, int CPU, int Nx, int Ny, int Nz, int tx, int ty, int tz, std::of
     double flops;
     cudaEventElapsedTime( &gputime, start, stop);
     printf("Processing time for GPU: %f (ms) \n",gputime);
-    flops = 7.0*(Nx-2)*(Ny-2)*iter;
+    flops = 7.0*(Nx-2)*(Ny-2)*(Nz-2)*iter;
     printf("GPU Gflops: %f\n",flops/(1000000.0*gputime));
     
     // Copy result from device memory to host memory
@@ -294,12 +308,15 @@ int op(int gid, int CPU, int Nx, int Ny, int Nz, int tx, int ty, int tz, std::of
     outg = fopen("phi_GPU_Tex_3D.dat","w");
 
     fprintf(outg, "GPU (using texture) field configuration:\n");
-    for(int j=Ny-1;j>-1;j--) {
-      for(int i=0; i<Nx; i++) {
-        fprintf(outg,"%.2e ",g_new[i+j*Nx]);
-      }
-      fprintf(outg,"\n");
-    }
+	for(int k=Nz-1;k>=0;k--){
+		for(int j=Ny-1;j>=0;j--) {
+		  	for(int i=0; i<Nx; i++) {
+				fprintf(outg,"%.2e ",g_new[i+Nx*(j+Ny*k)]);
+			}
+		  	fprintf(outg,"\n");
+		}
+		fprintf(outg,"\n");
+	}
     fclose(outg);
 
     // start the timer
@@ -319,55 +336,67 @@ int op(int gid, int CPU, int Nx, int Ny, int Nz, int tx, int ty, int tz, std::of
     iter = 0;            // counter for iterations
     flag = true;     
 
-    float t, l, r, b;    // top, left, right, bottom
-    int site, ym1, xm1, xp1, yp1;
+    float t, l, r, b, f, k;    // top, left, right, bottom
+    int site, ym1, xm1, xp1, yp1, zm1, zp1;
 
     while ( (error > eps) && (iter < MAX) ) {
       if(flag) {
         error = 0.0;
+		for(int z=0; z<Nz; z++) {
         for(int y=0; y<Ny; y++) {
         for(int x=0; x<Nx; x++) { 
-          if(x==0 || x==Nx-1 || y==0 || y==Ny-1) {   
+          if(x==0 || x==Nx-1 || y==0 || y==Ny-1 || z==0 || z==Nz-1) {   
           }
           else {
-            site = x+y*Nx;
+            site = x+Nx*(y+Ny*z);
             xm1 = site - 1;    // x-1
             xp1 = site + 1;    // x+1
-            ym1 = site - Nx;   // y-1
-            yp1 = site + Nx;   // y+1
+            ym1 = x+Nx*((y-1)+Ny*z);   // y-1
+            yp1 = x+Nx*((y+1)+Ny*z);   // y+1
+            zm1 = x+Nx*(y+Ny*(z-1));   // z-1
+            zp1 = x+Nx*(y+Ny*(z+1));   // z+1
             b = h_old[ym1]; 
-            l = h_old[xm1]; 
+            l = h_old[xm1];
+			k = h_old[zm1];
             r = h_old[xp1]; 
-            t = h_old[yp1]; 
-            h_new[site] = 0.25*(b+l+r+t);
+            t = h_old[yp1];
+			f = h_old[zp1];
+            h_new[site] = (b+l+r+t+f+k)/6.0;
             diff = h_new[site]-h_old[site]; 
             error = error + diff*diff;
           }
         } 
-        } 
+        }
+		}
       }
       else {
         error = 0.0;
+		for(int z=0; z<Nz; z++) {
         for(int y=0; y<Ny; y++) {
         for(int x=0; x<Nx; x++) { 
-          if(x==0 || x==Nx-1 || y==0 || y==Ny-1) {
+          if(x==0 || x==Nx-1 || y==0 || y==Ny-1 || z==0 || z==Nz-1) {   
           }
           else {
-            site = x+y*Nx;
+            site = x+Nx*(y+Ny*z);
             xm1 = site - 1;    // x-1
             xp1 = site + 1;    // x+1
-            ym1 = site - Nx;   // y-1
-            yp1 = site + Nx;   // y+1
+            ym1 = x+Nx*((y-1)+Ny*z);   // y-1
+            yp1 = x+Nx*((y+1)+Ny*z);   // y+1
+            zm1 = x+Nx*(y+Ny*(z-1));   // z-1
+            zp1 = x+Nx*(y+Ny*(z+1));   // z+1
             b = h_new[ym1]; 
-            l = h_new[xm1]; 
+            l = h_new[xm1];
+			k = h_new[zm1];
             r = h_new[xp1]; 
-            t = h_new[yp1]; 
-            h_old[site] = 0.25*(b+l+r+t);
+            t = h_new[yp1];
+			f = h_new[zp1];
+            h_old[site] = (b+l+r+t+f+k)/6.0;
             diff = h_new[site]-h_old[site]; 
             error = error + diff*diff;
-          } 
+          }
+        } 
         }
-        }
+		}
       }
       flag = !flag;
       iter++;
@@ -388,7 +417,7 @@ int op(int gid, int CPU, int Nx, int Ny, int Nz, int tx, int ty, int tz, std::of
     float cputime;
     cudaEventElapsedTime( &cputime, start, stop);
     printf("Processing time for CPU: %f (ms) \n",cputime);
-    flops = 7.0*(Nx-2)*(Ny-2)*iter;
+    flops = 7.0*(Nx-2)*(Ny-2)*(Nz-2)*iter;
     printf("CPU Gflops: %lf\n",flops/(1000000.0*cputime));
     printf("Speed up of GPU = %f\n", cputime/(gputime_tot));
     fflush(stdout);
@@ -402,12 +431,15 @@ int op(int gid, int CPU, int Nx, int Ny, int Nz, int tx, int ty, int tz, std::of
     outc = fopen("phi_CPU_3D.dat","w");
 
     fprintf(outc,"CPU field configuration:\n");
-    for(int j=Ny-1;j>-1;j--) {
-      for(int i=0; i<Nx; i++) {
-        fprintf(outc,"%.2e ",h_new[i+j*Nx]);
-      }
-      fprintf(outc,"\n");
-    }
+    for(int z=Nz-1;z>-1;z--) {
+    	for(int j=Ny-1;j>-1;j--) {
+      		for(int i=0; i<Nx; i++) {
+        		fprintf(outc,"%.2e ",h_new[i+Nx*(j+Ny*z)]);
+      		}
+      		fprintf(outc,"\n");
+    	}
+      	fprintf(outc,"\n");
+	}
     fclose(outc);
 
 //    printf("\n");
@@ -460,14 +492,16 @@ int main(void)
 	fflush(stdout);
 
 	int Ns[4] = {32, 64, 128, 256};
+	//int Ns[2] = {4, 16};
 	int ts[4] = {4, 8, 16, 32};
+	//int ts[2] = {2, 4};
 	for(int i=0; i<4; i++)
 	{
 
 		for(int j=0; j<4; j++)
 		{
 			printf("%d %d\n",i, j);
-			op(gid, CPU, Ns[i], Ns[i], ts[j], ts[j], myfile);
+			op(gid, CPU, Ns[i], Ns[i], Ns[i], ts[j], ts[j], ts[j], myfile);
 		}
 	}
 
