@@ -6,7 +6,8 @@
 #include <stdlib.h>
 #include <omp.h>          // header for OpenMP
 #include <cuda_runtime.h>
-
+#include <iostream>
+#include <fstream>
 // Variables
 float* h_A;   // host vectors
 float* h_B;
@@ -62,51 +63,10 @@ __global__ void VecDot(const float* A, const float* B, float* C, int N)
 
 // Host code
 
-int main(void)
+int op(int NGPU,int* Dev,int N,int threadsPerBlock,std::ofstream& myfile)
 {
-    printf("\n");
-    printf("Vector Addition with multiple GPUs \n");
-    int N, NGPU, cpu_thread_id=0;
-    int *Dev; 
-    long mem = 1024*1024*1024;     // 4 Giga for float data type.
-
-    printf("Enter the number of GPUs: ");
-    scanf("%d", &NGPU);
-    printf("%d\n", NGPU);
-    Dev = (int *)malloc(sizeof(int)*NGPU);
-
-    int numDev = 0;
-    printf("GPU device number: ");
-    for(int i = 0; i < NGPU; i++) {
-      scanf("%d", &Dev[i]);
-      printf("%d ",Dev[i]);
-      numDev++;
-      if(getchar() == '\n') break;
-    }
-    printf("\n");
-    if(numDev != NGPU) {
-      fprintf(stderr,"Should input %d GPU device numbers\n", NGPU);
-      exit(1);
-    }
-
-    printf("Enter the size of the vectors: ");
-    scanf("%d", &N);        
-    printf("%d\n", N);        
-    if (3*N > mem) {
-        printf("The size of these 3 vectors cannot be fitted into 4 Gbyte\n");
-        exit(1);
-    }
+	int cpu_thread_id = 0;
     long size = N*sizeof(float);
-
-    // Set the sizes of threads and blocks
-    int threadsPerBlock;
-    printf("Enter the number of threads per block: ");
-    scanf("%d", &threadsPerBlock);
-    printf("%d\n", threadsPerBlock);
-    if(threadsPerBlock > 1024) {
-      printf("The number of threads per block must be less than 1024 ! \n");
-      exit(1);
-    }
     int blocksPerGrid = (N + threadsPerBlock*NGPU - 1) / (threadsPerBlock*NGPU);
     printf("The number of blocks is %d\n", blocksPerGrid);
     if(blocksPerGrid > 2147483647) {
@@ -180,10 +140,7 @@ int main(void)
 
 
     	int sm = threadsPerBlock*sizeof(float);
-		printf("Start Dot.\n");
         VecDot<<<blocksPerGrid, threadsPerBlock, sm>>>(d_A, d_B, d_C, N/NGPU);
-		printf("Done Dot.\n");
-		printf("cpu_thread_id:%d\n", cpu_thread_id);
 		//VecAdd<<<blocksPerGrid, threadsPerBlock>>>(d_A, d_B, d_C, N/NGPU);
 		cudaDeviceSynchronize();
 
@@ -206,7 +163,6 @@ int main(void)
 		//cudaMemcpy(h_C+N/NGPU*cpu_thread_id, d_C, size/NGPU, cudaMemcpyDeviceToHost);
 	
     	cudaMemcpy(h_C+(nb/NGPU)*cpu_thread_id, d_C, sb/NGPU, cudaMemcpyDeviceToHost);
-		printf("Copied....\n");
 		cudaFree(d_A);
 		cudaFree(d_B);
 		cudaFree(d_C);
@@ -270,6 +226,7 @@ int main(void)
     printf("h_D =%20.15e\n",h_D);
     //sum = sqrt(sum);
     //printf("norm(h_C - h_D)=%20.15e\n",sum);
+	myfile<<threadsPerBlock<<","<<blocksPerGrid<<","<<Outime<<","<<gputime<<","<<Intime <<","<<gputime_tot<<","<<diff<<","<<cputime<<","<< (cputime/(gputime_tot))<<std::endl;
 
     for (int i=0; i < NGPU; i++) {
 	cudaSetDevice(i);
@@ -285,4 +242,55 @@ void RandomInit(float* data, int n)
 {
     for (int i = 0; i < n; ++i)
         data[i] = rand() / (float)RAND_MAX;
+}
+
+int main(void){
+	std::ofstream myfile;
+	myfile.open("Output.csv");
+	myfile<<"threadsPerBlock"<<","<<"blocksPerGrid"<<","<<"Outime"<<","<<"gputime"<<","<<"Intime"<<","<<"gputime_tot"<<","<<"diff"<<","<<"cputime"<<","<<"savetime"<<std::endl;
+
+    printf("\n");
+    printf("--------------------------------------------------------------------\n");
+    printf("Vector Addition with multiple GPUs \n");
+    int N, NGPU=0;
+    int *Dev; 
+    long mem = 1024*1024*1024;     // 4 Giga for float data type.
+
+    printf("Enter the number of GPUs: ");
+    scanf("%d", &NGPU);
+    printf("%d\n", NGPU);
+    Dev = (int *)malloc(sizeof(int)*NGPU);
+
+    int numDev = 0;
+    printf("GPU device number: ");
+    for(int i = 0; i < NGPU; i++) {
+      scanf("%d", &Dev[i]);
+      printf("%d ",Dev[i]);
+      numDev++;
+      if(getchar() == '\n') break;
+    }
+    printf("\n");
+    if(numDev != NGPU) {
+      fprintf(stderr,"Should input %d GPU device numbers\n", NGPU);
+      exit(1);
+    }
+
+    printf("Enter the size of the vectors: ");
+    scanf("%d", &N);        
+    printf("%d\n", N);        
+    if (3*N > mem) {
+        printf("The size of these 3 vectors cannot be fitted into 4 Gbyte\n");
+        exit(1);
+    }
+
+    // Set the sizes of threads and blocks
+
+    int threadsPerBlocks[6] = {2, 8, 16, 64, 256, 1024};
+
+
+	for(int i = 0; i<6; i++){
+		for(int j=0; j<6; j++){
+			op(NGPU, Dev, N, threadsPerBlocks[i], myfile);
+		}
+	}
 }
