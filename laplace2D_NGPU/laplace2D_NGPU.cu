@@ -491,7 +491,7 @@ int main(void)
 	int      CPU;		// compute CPU solution or not.
 
 	std::ofstream myfile;
-	myfile.open("Output_.csv");
+	myfile.open("Output.csv");
 	myfile<<"lattice_sizes"<<","<<"block sizes"<<","<<"gputime"<<","<<"gputime_tot"<<std::endl;
 
  //  Get the input parameters.
@@ -537,9 +537,9 @@ int main(void)
     printf("%d\n",CPU);
     fflush(stdout);
 
-	int ln = 2;
-	//int ts[ln] = {8, 32, 256, 512};
-	int ts[ln] = {4, 16};
+	int ln = 4;
+	int ts[ln] = {4, 8, 16, 32};
+	//int ts[ln] = {8, 32};
 	for(int i=0; i<ln; i++)
 	{
 		printf("loop: %d\n",i);
