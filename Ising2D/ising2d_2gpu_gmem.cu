@@ -24,84 +24,15 @@ int *d_spin;          // device spin variables
 float *h_rng;         // host random numbers
 float *d_rng;         // device random numbers 
 
-__constant__ int fw[1000],bw[1000];     // declare constant memory for fw, bw 
+__constant__ int  fw[1000],bw[1000];     // declare constant memory for fw, bw 
 int const a = 2;
-
-__global__ void metro_gmem_odd_mgpu(int* spin, float *ranf, const float B, const float T, int* dL_spin,int* dR_spin,int* dB_spin,int* dT_spin)
-{
-		int Lx = a*blockDim.x*gridDim.x;
-		int Ly = blockDim.y*gridDim.y;
-    
-		int    x, y, parity;
-    int    i, io;
-    int    old_spin, new_spin, spins;
-    int    k1, k2, k3, k4;
-		int 	 t, l, r, b;
-    float  de; 
-
-    // thread index in a block of size (tx,ty) corresponds to 
-    // the index ie/io of the lattice with size (2*tx,ty)=(nx,ny).
-    // tid = threadIdx.x + threadIdx.y*blockDim.x = ie or io  
- 		 
-    int Nx = a*blockDim.x;             // block size before even-odd reduction
-    int nx = a*blockDim.x*gridDim.x;   // number of sites in x-axis of the entire lattice 
-
-    // next, go over the odd sites 
-
-    io = threadIdx.x + threadIdx.y*blockDim.x;   
-    x = (2*io)%Nx;
-    y = ((2*io)/Nx)%Nx;
-    parity=(x+y+1)%2;
-    x = x + parity;  
-
-    // add the offsets to get its position in the full lattice
-
-    x += Nx*blockIdx.x;    
-    y += blockDim.y*blockIdx.y;  
-
-    i = x + y*nx;
-    old_spin = spin[i];
-    new_spin = -old_spin;
-    k1 = fw[x] + y*nx;     // right
-    k2 = x + fw[y]*nx;     // top
-    k3 = bw[x] + y*nx;     // left
-    k4 = x + bw[y]*nx;     // bottom
-		r = spin[k1];
-		t = spin[k2];
-		l = spin[k3];
-		b = spin[k4];
-		
-		if(x == 0){ // left == 0
-			l = dL_spin[(Lx-1)+y*Lx];
-			//r = spin[i+1];
-		}else if(x == Lx - 1){ // right == O.O.B
-			//l = spin[i-1];
-			r = dR_spin[y*Lx];
-		}
-		if(y == 0){ // bottom == 0
-			b = dB_spin[x+(Ly-1)*Lx];
-			//t = spin[(i+1)*Lx];
-		}else if(y == Ly - 1){ // top == O.O.B
-			//b = spin[(i-1)*Lx];
-			t = dT_spin[x];
-		}
-    //spins = spin[k1] + spin[k2] + spin[k3] + spin[k4];
-    spins = l + r + b + t;
-    //printf("l=%d  r=%d  b=%d  t=%d\n", l, r, b, t);
-    //printf("--- s1=%d  s2=%d  s3=%d  s4=%d\n", spin[k1], spin[k2], spin[k3], spin[k4]);
-    de = -(new_spin - old_spin)*(spins + B);
-    if((de <= 0.0) || (ranf[i] < exp(-de/T))) {
-      spin[i] = new_spin;       // accept the new spin;
-    }
-
-    __syncthreads();
-
-}
+int const Lax = 1;
+int const Lay = 1;
 
 __global__ void metro_gmem_even_mgpu(int* spin, float *ranf, const float B, const float T, int* dL_spin,int* dR_spin,int* dB_spin,int* dT_spin)
 {
-		int Lx = a*blockDim.x*gridDim.x;
-		int Ly = blockDim.y*gridDim.y;
+		int Lx = Lax*blockDim.x*gridDim.x;
+		int Ly = Lay*blockDim.y*gridDim.y;
 		
     int    x, y, parity;
     int    i, ie;
@@ -143,17 +74,13 @@ __global__ void metro_gmem_even_mgpu(int* spin, float *ranf, const float B, cons
 		b = spin[k4];
 		
 		if(x == 0){ // left == 0
-			l = dL_spin[(Lx-1)+y*Lx];
-			//r = spin[i+1];
-		}else if(x == Lx - 1){ // right == O.O.B
-			//l = spin[i-1];
-			r = dR_spin[y*Lx];
+			l = dL_spin[(nx-1)+y*nx];
+		}else if(x == nx - 1){ // right == O.O.B
+			r = dR_spin[y*nx];
 		}
 		if(y == 0){ // bottom == 0
-			b = dB_spin[x+(Ly-1)*Lx];
-			//t = spin[(i+1)*Lx];
+			b = dB_spin[x+(Ly-1)*nx];
 		}else if(y == Ly - 1){ // top == O.O.B
-			//b = spin[(i-1)*Lx];
 			t = dT_spin[x];
 		}
     //spins = spin[k1] + spin[k2] + spin[k3] + spin[k4];
@@ -167,6 +94,72 @@ __global__ void metro_gmem_even_mgpu(int* spin, float *ranf, const float B, cons
  
 }   
 
+
+
+__global__ void metro_gmem_odd_mgpu(int* spin, float *ranf, const float B, const float T, int* dL_spin,int* dR_spin,int* dB_spin,int* dT_spin)
+{
+		int Lx = Lax*blockDim.x*gridDim.x;
+		int Ly = Lay*blockDim.y*gridDim.y;
+    
+		int    x, y, parity;
+    int    i, io;
+    int    old_spin, new_spin, spins;
+    int    k1, k2, k3, k4;
+		int 	 t, l, r, b;
+    float  de; 
+
+    // thread index in a block of size (tx,ty) corresponds to 
+    // the index ie/io of the lattice with size (2*tx,ty)=(nx,ny).
+    // tid = threadIdx.x + threadIdx.y*blockDim.x = ie or io  
+ 		 
+    int Nx = a*blockDim.x;             // block size before even-odd reduction
+    int nx = a*blockDim.x*gridDim.x;   // number of sites in x-axis of the entire lattice 
+
+    // next, go over the odd sites 
+
+    io = threadIdx.x + threadIdx.y*blockDim.x;   
+    x = (2*io)%Nx;
+    y = ((2*io)/Nx)%Nx;
+    parity=(x+y+1)%2;
+    x = x + parity;  
+
+    // add the offsets to get its position in the full lattice
+
+    x += Nx*blockIdx.x;    
+    y += blockDim.y*blockIdx.y;  
+
+    i = x + y*nx;
+    old_spin = spin[i];
+    new_spin = -old_spin;
+    k1 = fw[x] + y*nx;     // right
+    k2 = x + fw[y]*nx;     // top
+    k3 = bw[x] + y*nx;     // left
+    k4 = x + bw[y]*nx;     // bottom
+		r = spin[k1];
+		t = spin[k2];
+		l = spin[k3];
+		b = spin[k4];
+		
+		if(x == 0){ // left == 0
+			l = dL_spin[(nx-1)+y*nx];
+		}else if(x == nx - 1){ // right == O.O.B
+			r = dR_spin[y*nx];
+		}
+		if(y == 0){ // bottom == 0
+			b = dB_spin[x+(Ly-1)*nx];
+		}else if(y == Ly - 1){ // top == O.O.B
+			t = dT_spin[x];
+		}
+    //spins = spin[k1] + spin[k2] + spin[k3] + spin[k4];
+    spins = l + r + b + t;
+    de = -(new_spin - old_spin)*(spins + B);
+    if((de <= 0.0) || (ranf[i] < exp(-de/T))) {
+      spin[i] = new_spin;       // accept the new spin;
+    }
+
+    __syncthreads();
+
+}
 
 
 
@@ -195,6 +188,8 @@ int main(void) {
   double E_ex; 		// exact solution of < E >
   double M_ex; 		// exact solution of < M >
 	int cpu_thread_id = 0;
+  cudaEvent_t start, stop;
+	float Intime, Outime;
 
 	float** md_rng;
 	int** md_spin;
@@ -227,13 +222,14 @@ int main(void) {
 		printf("  * Enter the GPU ID (0/1/...): ");
 		scanf("%d",&(Dev[i]));
 		printf("%d\n", Dev[i]);
-		err = cudaSetDevice(Dev[i]);
+		//err = cudaSetDevice(Dev[i]);
 		if(err != cudaSuccess){
 			printf("!!! cannot select GPU");
 			exit(1);
 		}
 	}
 
+	//cudaSetDevice(1);
   printf("Ising Model on 2D Square Lattice with p.b.c.\n");
   printf("============================================\n");
   printf("Initialize the RNG\n");
@@ -390,7 +386,10 @@ int main(void) {
 
 	md_rng = (float **)malloc(NGPU*sizeof(float *));
 	md_spin = (int **)malloc(NGPU*sizeof(int *));
+	//fws = (int**)malloc(NGPU*sizeof(int *));
+	//bws = (int**)malloc(NGPU*sizeof(int *));
 
+	
 	omp_set_num_threads(NGPU);
 	#pragma omp parallel private(cpu_thread_id)
 	{
@@ -401,8 +400,13 @@ int main(void) {
 		cudaSetDevice(Dev[cpu_thread_id]);
     printf("cudaSetDevice(Dev[cpu_thread_id]):%d\n", Dev[cpu_thread_id]);
   
+		cudaMemcpyToSymbol(fw, ffw, nx*sizeof(int));  // copy to constant memory
+		//cudaMemcpyToSymbol(fws[cpu_thread_id], ffw, nx*sizeof(int));  // copy to constant memory
+  	cudaMemcpyToSymbol(bw, bbw, nx*sizeof(int));
+  	//cudaMemcpyToSymbol(bws[cpu_thread_id], bbw, nx*sizeof(int));
+  
 		
-		if(NGPU > 1){
+		if(NGPU >= 1){
 			int cpuid_r = ((cpuid_x+1)%NGx) + cpuid_y*NGx;         // GPU on the right
 			//printf("cpuid_r: %d \n",cpuid_r);
 			cudaDeviceEnablePeerAccess(Dev[cpuid_r],0);
@@ -413,6 +417,12 @@ int main(void) {
 			cudaDeviceEnablePeerAccess(Dev[cpuid_t],0);
 			int cpuid_b = cpuid_x + ((cpuid_y+NGy-1)%NGy)*NGx;     // GPU on the bottom
 			cudaDeviceEnablePeerAccess(Dev[cpuid_b],0);
+		}
+		// start the timer
+		if(cpu_thread_id == 0){
+			cudaEventCreate(&start);
+			cudaEventCreate(&stop);
+			cudaEventRecord(start, 0);
 		}
 
 		// Allocate vectors in device memory
@@ -429,15 +439,24 @@ int main(void) {
 		}
 
 		#pragma omp barrier
-
+		// stop the timer
+		if(cpu_thread_id == 0){
+			cudaEventRecord(stop, 0);
+			cudaEventSynchronize(stop);
+			cudaEventElapsedTime(&Intime, start, stop);
+			printf(" Data input time for GPU: %f (ms) \n", Intime);
+		}
 	} // OpenMP
+	
+	cudaSetDevice(0);
+	cudaMemcpyToSymbol(fw, ffw, nx*sizeof(int));  // copy to constant memory
+	cudaMemcpyToSymbol(bw, bbw, nx*sizeof(int));
   
 
 
-  // create the timer
-  cudaEvent_t start, stop;
-  cudaEventCreate(&start);
-  cudaEventCreate(&stop);
+  // create the time
+  //cudaEventCreate(&start);
+  //cudaEventCreate(&stop);
 
   //start the timer
   cudaEventRecord(start,0);
@@ -458,7 +477,7 @@ int main(void) {
 			int *dL_spin, *dR_spin, *dT_spin, *dB_spin;
 			dL_spin = (cpuid_x == 0)     ? md_spin[NGx-1+cpuid_y*NGx] : md_spin[cpuid_x-1+cpuid_y*NGx];
 			dR_spin = (cpuid_x == NGx-1) ? md_spin[0+cpuid_y*NGx] : md_spin[cpuid_x+1+cpuid_y*NGx];
-			dB_spin = (cpuid_y == 0    ) ? md_spin[cpuid_x+(NGy-1)*NGx] : md_spin[cpuid_x+(cpuid_y-1)*NGx];
+			dB_spin = (cpuid_y == 0    ) ? md_spin[cpuid_x+(NGy-1)*NGx] : md_spin[cpuid_x+(cpuid_y-1)*NGx];			
 			dT_spin = (cpuid_y == NGy-1) ? md_spin[cpuid_x+(0)*NGx] : md_spin[cpuid_x+(cpuid_y+1)*NGx];
 			//
 			
@@ -472,8 +491,9 @@ int main(void) {
 			//rng_MT(h_rng, ns);                                  // generate ns random numbers 
 			//cudaMemcpy(d_rng, h_rng, ns*sizeof(float), cudaMemcpyHostToDevice);
 			metro_gmem_even_mgpu<<<blocks,threads>>>(md_spin[cpu_thread_id], md_rng[cpu_thread_id], B, T, dL_spin, dR_spin, dB_spin, dT_spin);    // updating with Metropolis algorithm
+ 			//cudaDeviceSynchronize(); 
 			metro_gmem_odd_mgpu<<<blocks,threads>>>(md_spin[cpu_thread_id], md_rng[cpu_thread_id], B, T, dL_spin, dR_spin, dB_spin, dT_spin);     // updating with Metropolis algorithm
- 			cudaDeviceSynchronize(); 
+ 			//cudaDeviceSynchronize(); 
   
 		}
 	}
@@ -497,7 +517,16 @@ int main(void) {
 			dL_spin = (cpuid_x == 0)     ? md_spin[NGx-1+cpuid_y*NGx] : md_spin[cpuid_x-1+cpuid_y*NGx];
 			dR_spin = (cpuid_x == NGx-1) ? md_spin[0+cpuid_y*NGx] : md_spin[cpuid_x+1+cpuid_y*NGx];
 			dB_spin = (cpuid_y == 0    ) ? md_spin[cpuid_x+(NGy-1)*NGx] : md_spin[cpuid_x+(cpuid_y-1)*NGx];
+	  	int bidx = (cpuid_y == 0    ) ? cpuid_x+(NGy-1)*NGx : cpuid_x+(cpuid_y-1)*NGx;
+			//printf("bottom(%d, (%d, %d)),  %d\n", cpu_thread_id, cpuid_x, cpuid_y, bidx);
 			dT_spin = (cpuid_y == NGy-1) ? md_spin[cpuid_x+(0)*NGx] : md_spin[cpuid_x+(cpuid_y+1)*NGx];
+			int tidx = (cpuid_y == NGy-1) ? cpuid_x+(0)*NGx : cpuid_x+(cpuid_y+1)*NGx;
+			
+			if(bidx==cpu_thread_id || tidx==cpu_thread_id)
+			{	
+				//printf("wrong in bidx or tidx");
+				//exit(1);
+			}
 			
 			for (int i=0; i < Ly; i++) {
 				float *h, *d;
@@ -509,8 +538,9 @@ int main(void) {
 			//rng_MT(h_rng, ns);                                  // generate ns random numbers 
 			//cudaMemcpy(d_rng, h_rng, ns*sizeof(float), cudaMemcpyHostToDevice);
 			metro_gmem_even_mgpu<<<blocks,threads>>>(md_spin[cpu_thread_id], md_rng[cpu_thread_id], B, T, dL_spin, dR_spin, dB_spin, dT_spin);    // updating with Metropolis algorithm
+ 			//cudaDeviceSynchronize(); 
 			metro_gmem_odd_mgpu<<<blocks,threads>>>(md_spin[cpu_thread_id], md_rng[cpu_thread_id], B, T, dL_spin, dR_spin, dB_spin, dT_spin);     // updating with Metropolis algorithm
- 			cudaDeviceSynchronize(); 
+ 			//cudaDeviceSynchronize(); 
 		}
 		/*
 		rng_MT(h_rng, ns);                                  // generate ns random numbers 
@@ -620,6 +650,7 @@ int main(void) {
   gsl_rng_free(rng);
   cudaFree(d_spin);
   cudaFree(d_rng);
+	
 	
 	#pragma omp parallel private(cpu_thread_id)
 	{
