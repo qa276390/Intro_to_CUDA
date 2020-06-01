@@ -1,0 +1,38 @@
+MGPU! 
+
+* Initial parameters:
+  Enter the number of GPUs (NGx, NGy): 1 2
+  * Enter the GPU ID (0/1/...): 0
+  * Enter the GPU ID (0/1/...): 1
+Ising Model on 2D Square Lattice with p.b.c.
+============================================
+Initialize the RNG
+Enter the seed:
+12345
+The RNG has been initialized
+Enter the number of sites in each dimension (<= 1000)
+200
+Enter the # of sweeps for thermalization
+1000
+Enter the # of measurements
+1000
+Enter the interval between successive measurements
+10
+Enter the display interval
+100
+Enter the interval for saving spin configuration
+10
+Enter the temperature (in units of J/k)
+2.100000
+Enter the external magnetization
+0.000000
+Initialize spins configurations :
+ 0: cold start 
+ 1: hot start 
+0
+Enter the number of threads (tx,ty) per block: For even/odd updating, tx=ty/2 is assumed: 4 8
+The dimension of the grid is (25, 25)
+./dats/ngpu_T_2.1.datT=2.10000e+00  B=0.00000e+00  ns=40000  E_exact=-1.66208e+00  M_exact=8.68748e-01
+Thermalizing
+sweeps   < E >     < M >
+---------------------------------
