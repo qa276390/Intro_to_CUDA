@@ -7,14 +7,14 @@
 10
 100
 10
-2.0
+2.1
 0.0
 0
 4 8
 
 
-
-GPU_ID  // 
+NGx NGy // ngx, ngy
+GPU_ID  // gpu ids 
 12345   // seed for RNG
 16      // the number of sites in each dimension
 1000    // the # of sweeps for thermalization
