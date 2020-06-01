@@ -74,14 +74,14 @@ __global__ void metro_gmem_even_mgpu(int* spin, float *ranf, const float B, cons
 		b = spin[k4];
 		
 		if(x == 0){ // left == 0
-			l = dL_spin[(nx-1)+y*nx];
+			l = dL_spin[k3];
 		}else if(x == nx - 1){ // right == O.O.B
-			r = dR_spin[y*nx];
+			r = dR_spin[k1];
 		}
 		if(y == 0){ // bottom == 0
-			b = dB_spin[x+(Ly-1)*nx];
+			b = dB_spin[k4];
 		}else if(y == Ly - 1){ // top == O.O.B
-			t = dT_spin[x];
+			t = dT_spin[k2];
 		}
     //spins = spin[k1] + spin[k2] + spin[k3] + spin[k4];
     spins = l + r + b + t;
@@ -141,15 +141,16 @@ __global__ void metro_gmem_odd_mgpu(int* spin, float *ranf, const float B, const
 		b = spin[k4];
 		
 		if(x == 0){ // left == 0
-			l = dL_spin[(nx-1)+y*nx];
+			l = dL_spin[k3];
 		}else if(x == nx - 1){ // right == O.O.B
-			r = dR_spin[y*nx];
+			r = dR_spin[k1];
 		}
 		if(y == 0){ // bottom == 0
-			b = dB_spin[x+(Ly-1)*nx];
+			b = dB_spin[k4];
 		}else if(y == Ly - 1){ // top == O.O.B
-			t = dT_spin[x];
+			t = dT_spin[k2];
 		}
+		
     //spins = spin[k1] + spin[k2] + spin[k3] + spin[k4];
     spins = l + r + b + t;
     de = -(new_spin - old_spin)*(spins + B);
@@ -336,20 +337,33 @@ int main(void) {
       }
     }
   }
+	char fstr[20];
+	char f3str[20];
+	char buf[5];
+	strcpy(fstr, "./dats/ising2d_ngpu_T_");
+	gcvt(T, 2, buf);
+	strcat(fstr, buf);
+	strcat(fstr, ".dat");
+	printf(fstr);
+
+	strcpy(f3str, "./dats/spin_ngpu_T_");
+	strcat(f3str, buf);
+	strcat(f3str, ".dat");
+	printf(f3str);
 
   FILE *output;            
-  output = fopen("ising2d_2gpu_gmem.dat","w");
+  output = fopen(fstr,"w");
   FILE *output3;
-  output3 = fopen("spin_2gpu_gmem.dat","w");   
+  output3 = fopen(f3str,"w");   
 
   // Allocate vectors in device memory
 
-  cudaMalloc((void**)&d_spin, ns*sizeof(int));         // device spin variables
-  cudaMalloc((void**)&d_rng, ns*sizeof(float));        // device random numbers
+  //cudaMalloc((void**)&d_spin, ns*sizeof(int));         // device spin variables
+  //cudaMalloc((void**)&d_rng, ns*sizeof(float));        // device random numbers
 
   // Copy vectors from host memory to device memory
 
-  cudaMemcpy(d_spin, spin, ns*sizeof(int), cudaMemcpyHostToDevice);
+  //cudaMemcpy(d_spin, spin, ns*sizeof(int), cudaMemcpyHostToDevice);
 
   if(B == 0.0) {
     exact_2d(T,B,&E_ex,&M_ex);
@@ -398,7 +412,7 @@ int main(void) {
 		cpuid_x       = cpu_thread_id % NGx;
 		cpuid_y       = cpu_thread_id / NGx;
 		cudaSetDevice(Dev[cpu_thread_id]);
-    printf("cudaSetDevice(Dev[cpu_thread_id]):%d\n", Dev[cpu_thread_id]);
+    //printf("cudaSetDevice(Dev[cpu_thread_id]):%d\n", Dev[cpu_thread_id]);
   
 		cudaMemcpyToSymbol(fw, ffw, nx*sizeof(int));  // copy to constant memory
 		//cudaMemcpyToSymbol(fws[cpu_thread_id], ffw, nx*sizeof(int));  // copy to constant memory
@@ -448,15 +462,6 @@ int main(void) {
 		}
 	} // OpenMP
 	
-	cudaSetDevice(0);
-	cudaMemcpyToSymbol(fw, ffw, nx*sizeof(int));  // copy to constant memory
-	cudaMemcpyToSymbol(bw, bbw, nx*sizeof(int));
-  
-
-
-  // create the time
-  //cudaEventCreate(&start);
-  //cudaEventCreate(&stop);
 
   //start the timer
   cudaEventRecord(start,0);
@@ -522,11 +527,6 @@ int main(void) {
 			dT_spin = (cpuid_y == NGy-1) ? md_spin[cpuid_x+(0)*NGx] : md_spin[cpuid_x+(cpuid_y+1)*NGx];
 			int tidx = (cpuid_y == NGy-1) ? cpuid_x+(0)*NGx : cpuid_x+(cpuid_y+1)*NGx;
 			
-			if(bidx==cpu_thread_id || tidx==cpu_thread_id)
-			{	
-				//printf("wrong in bidx or tidx");
-				//exit(1);
-			}
 			
 			for (int i=0; i < Ly; i++) {
 				float *h, *d;

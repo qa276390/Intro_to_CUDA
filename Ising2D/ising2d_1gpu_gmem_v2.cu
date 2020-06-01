@@ -261,11 +261,27 @@ int main(void) {
       }
     }
   }
+	
+	char fstr[20];
+	char f3str[20];
+	char buf[5];
+	strcpy(fstr, "./dats/ising2d_1gpu_T_");
+	gcvt(T, 2, buf);
+	strcat(fstr, buf);
+	strcat(fstr, ".dat");
+	printf(fstr);
+
+	strcpy(f3str, "./dats/spin_1gpu_T_");
+	strcat(f3str, buf);
+	strcat(f3str, ".dat");
+	printf(f3str);
 
   FILE *output;            
-  output = fopen("ising2d_1gpu_gmem.dat","w");
+  output = fopen(fstr,"w");
   FILE *output3;
-  output3 = fopen("spin_1gpu_gmem.dat","w");   
+  output3 = fopen(f3str,"w");   
+
+
 
   // Allocate vectors in device memory
 
