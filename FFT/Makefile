@@ -9,8 +9,9 @@ LIB     := -lcufft -lcudart
 BIN1    := fft_cpu
 BIN2    := fft_cuFFT
 BIN3    := poisson_cuFFT
+BIN4    := _poisson_cuFFT
 
-all: $(BIN1) $(BIN2) $(BIN3)
+all: $(BIN1) $(BIN2) $(BIN3) $(BIN4)
 
 $(BIN1): fft_cpu.cpp
 	$(CC) -o $(BIN1) $(CFLAGS) $<
@@ -21,5 +22,8 @@ $(BIN2): fft_cuFFT.cu
 $(BIN3): poisson_cuFFT.cu
 	$(NVCC) -o $(BIN3) $(NVFLAGS) $< $(LIB)
 
+$(BIN4): _poisson_cuFFT.cu
+	$(NVCC) -o $(BIN4) $(NVFLAGS) $< $(LIB)
+
 clean:
-	rm -f $(BIN1) $(BIN2) $(BIN3) *.o
+	rm -f $(BIN1) $(BIN2) $(BIN3) $(BIN4) *.o
