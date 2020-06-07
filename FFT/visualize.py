@@ -4,10 +4,10 @@
 # In[85]:
 
 
-import pandas as pd
-import matplotlib. pyplot as plt
+#import pandas as pd
+#import matplotlib. pyplot as plt
 import numpy as np
-from mpl_toolkits import mplot3d
+#from mpl_toolkits import mplot3d
 
 
 # In[86]:
@@ -72,4 +72,5 @@ for T in TYPE:
     print(T[1], T[0])
     print("%6.3f, %6.3f, %6.3f" % (v.mean(), v.max(), v.min()))
     print("%6.3f, %6.3f, %6.3f"  % (v3d.mean(), v3d.max(), v3d.min()))
+    print("%6.3f" % np.sum(v - v3d[:len(v)]))
 
