@@ -68,16 +68,12 @@ __global__ void computeRHS_3D(const float * __restrict__ d_x, const float * __re
 
     const float sigmaSquared = sigma * sigma;
 
-    const float rSquared = (d_x[tidx] - 0.5f * Lx) * (d_x[tidx] - 0.5f * Lx) +
-                           (d_y[tidy] - 0.5f * Ly) * (d_y[tidy] - 0.5f * Ly) +
-                           (d_z[tidz] - 0.5f * Lz) * (d_z[tidz] - 0.5f * Lz);
+		const float r = 0.5f;
+    const float rSquared = (d_x[tidx] - r * Lx) * (d_x[tidx] - r * Lx) +
+                           (d_y[tidy] - r * Ly) * (d_y[tidy] - r * Ly) +
+                           (d_z[tidz] - r * Lz) * (d_z[tidz] - r * Lz);
 		int index = tidx + M*(tidy + N * tidz);
-    d_r[index].x = expf(-rSquared / (2.f * sigmaSquared)) * (rSquared - 2.f * sigmaSquared) / (sigmaSquared * sigmaSquared);
-		if(isinf(d_r[index].x) || isnan(d_r[index].x)){
-			printf("%f\n", rSquared);
-			//exit(1);
-		}
-		//printf("hello\n");
+    d_r[index].x = expf(-rSquared / (3.f * sigmaSquared)) * (rSquared - 2.f * sigmaSquared) / (sigmaSquared * sigmaSquared);
     d_r[index].y = 0.f;
 
 }
@@ -113,17 +109,14 @@ __global__ void solvePoisson_3d(const float * __restrict__ d_kx, const float * _
 
     float scale = -(d_kx[tidx] * d_kx[tidx] + d_ky[tidy] * d_ky[tidy] + d_kz[tidz] * d_kz[tidz]);
 
-    if (tidx == 0 && tidy == 0 && tidz == 0) scale = 1.f;
+    //if (tidx == 0 && tidy == 0 && tidz == 0) scale = 1.f;
+    if ((tidx == 0 && tidy == 0) || (tidx == 0 && tidz == 0) || (tidy == 0 && tidz == 0)) scale = 1.f;
 
     scale = 1.f / scale;
 		int index = tidx + M*(tidy + N * tidz);
     d_r[index].x *= scale;
     d_r[index].y *= scale;
 		
-		if(isinf(d_r[index].x) || isnan(d_r[index].x)){
-			printf("scale: %f\n", scale);
-			//exit(1);
-		}
 
 }
 
@@ -174,6 +167,7 @@ __global__ void solvePoissonShared_3d(const float * __restrict__ d_kx, const flo
     float scale = -(kx_s[threadIdx.x] * kx_s[threadIdx.x] + ky_s[threadIdx.y] * ky_s[threadIdx.y] + kz_s[threadIdx.z] * kz_s[threadIdx.z]);
 
     if (tidx == 0 && tidy == 0 && tidz==0) scale = 1.f;
+    //if ((tidx == 0 && tidy == 0) || (tidx == 0 && tidz == 0) || (tidy == 0 && tidz == 0)) scale = 1.f;
 
     scale = 1.f / scale;
 		int index = tidx + M*(tidy + N * tidz);
@@ -294,9 +288,9 @@ int main()
     const int   M       = 20;              // --- Number of Fourier harmonics along x (should be a multiple of 2)
     const int   N       = 20;              // --- Number of Fourier harmonics along y(should be a multiple of 2)
     const int   O       = 20;              // --- Number of Fourier harmonics along z(should be a multiple of 2)
-    const float Lx      = 3.f;             // --- Domain size along x
-    const float Ly      = 3.f;            // --- Domain size along y
-    const float Lz      = 3.f;            // --- Domain size along z
+    const float Lx      = 1.5f;             // --- Domain size along x
+    const float Ly      = 1.5f;            // --- Domain size along y
+    const float Lz      = 1.5;            // --- Domain size along z
     const float sigma   = 0.1f;            // --- Characteristic width of f(make << 1)
 
     // --- Wavenumbers on the host
@@ -383,7 +377,7 @@ int main()
     // --- With cuFFT, an FFT followed by an IFFT will return the same array times the size of the transform
     // --- Accordingly, we need to scale the result.
     //const float scale = 1.f / ((float)M * (float)N);
-    const float scale = 1.f / ((float)M * (float)N * (float)O);
+    const float scale = -1.f / ((float)M * (float)N * (float)O);
     //float *d_result;    gpuErrchk(cudaMalloc(&d_result, M * N * sizeof(float)));
     float *d_result;    gpuErrchk(cudaMalloc(&d_result, M * N * O * sizeof(float)));
     //complex2RealScaled << <dimGrid, dimBlock >> > (d_r, d_result, M, N, scale);
